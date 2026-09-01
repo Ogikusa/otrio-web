@@ -1,35 +1,38 @@
 import { DurableObject } from "cloudflare:workers";
-
-export type GameStatus = "waiting" | "ready" | "playing";
-
-export interface Player {
-	id: string;
-	tokenHash: string;
-	name: string;
-}
-
-export interface GameState {
-	status: GameStatus;
-	hostPlayerId: string;
-	player: Player[];
-}
-
-function createInitialState(): GameState {
-	return {
-		status: "waiting",
-		hostPlayerId: crypto.randomUUID(),
-		player: [],
-	};
-}
+import { createInitBoardData } from "./lib/board";
+import type { GameState } from "./lib/game";
+import { createPlayer } from "./lib/player";
 
 export class GameRoom extends DurableObject {
-	async getState(): Promise<GameState> {
-		return (
-			(await this.ctx.storage.get<GameState>("state")) ?? createInitialState()
-		);
+	async getState(): Promise<GameState | undefined> {
+		return await this.ctx.storage.get<GameState>("state");
 	}
 
-	async setState(state: GameState): Promise<void> {
+	async initRoom(hostPlayerName: string) {
+		const current = await this.getState();
+
+		if (current) {
+			throw new Error("Room already exists");
+		}
+
+		const { player, rawToken } = await createPlayer(hostPlayerName, "host");
+
+		const state: GameState = {
+			status: "waiting",
+			players: [player],
+			board: createInitBoardData(),
+			lastActivityAt: Date.now(),
+		};
+
 		await this.ctx.storage.put("state", state);
+
+		return {
+			playerId: player.id,
+			token: rawToken,
+		};
+	}
+
+	async deleteRoom(): Promise<void> {
+		await this.ctx.storage.deleteAll();
 	}
 }
