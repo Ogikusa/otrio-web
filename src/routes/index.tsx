@@ -79,7 +79,7 @@ function Home() {
 								setIsPending(false);
 								return;
 							}
-							sessionStorage.setItem("playerToken", roomInfo.token);
+							sessionStorage.setItem(`room:${roomInfo.roomId}:token`, roomInfo.token);
 							navigate({ href: `/rooms/${roomInfo.roomId}/` });
 						}}
 					>
