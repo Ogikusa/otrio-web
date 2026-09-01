@@ -1,14 +1,49 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { createRoom, joinRoom } from "../lib/room";
 
 export const Route = createFileRoute("/")({ component: Home });
 
 function Home() {
-	const navigate = useNavigate();
+	const navigate = useNavigate({ from: "/" });
 	const [isPending, setIsPending] = useState(false);
 	const [name, setName] = useState("");
 	const [roomId, setRoomId] = useState("");
 	const [errorMsg, setErrorMsg] = useState("");
+
+	const validateName = () => {
+		const normalizedName = name.trim();
+		if (normalizedName.length === 0) {
+			setErrorMsg("名前を入力してください");
+			return;
+		}
+		if (normalizedName.length > 24) {
+			setErrorMsg("名前は24文字以内で入力してください");
+			return;
+		}
+		return normalizedName;
+	};
+
+	const enterRoom = async (
+		targetRoomId: string,
+		request: () => Promise<{ token: string }>,
+	) => {
+		setIsPending(true);
+		setErrorMsg("");
+		try {
+			const { token } = await request();
+			sessionStorage.setItem(`room:${targetRoomId}:token`, token);
+			await navigate({
+				to: "/rooms/$roomId",
+				params: { roomId: targetRoomId },
+			});
+		} catch (error) {
+			setErrorMsg(
+				error instanceof Error ? error.message : "通信に失敗しました",
+			);
+			setIsPending(false);
+		}
+	};
 
 	return (
 		<>
@@ -19,6 +54,7 @@ function Home() {
 					className="border h-16 w-90 p-2 text-2xl font-bold text-center disabled:bg-gray-200"
 					disabled={isPending}
 					value={name}
+					maxLength={24}
 					onChange={(e) => {
 						setName(e.target.value);
 					}}
@@ -30,6 +66,7 @@ function Home() {
 							className="border h-16 min-w-0 flex-1 p-2 text-2xl font-bold text-center disabled:bg-gray-200"
 							disabled={isPending}
 							value={roomId}
+							maxLength={6}
 							onChange={(e) => {
 								setRoomId(e.target.value.toUpperCase());
 							}}
@@ -42,14 +79,20 @@ function Home() {
 						"
 							disabled={isPending}
 							onClick={async () => {
-								if (name === "") {
-									setErrorMsg("名前を入力してください");
+								const normalizedName = validateName();
+								const normalizedRoomId = roomId.trim().toUpperCase();
+								if (!normalizedName) return;
+								if (
+									!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/.test(
+										normalizedRoomId,
+									)
+								) {
+									setErrorMsg("6文字のルームIDを入力してください");
 									return;
 								}
-								setIsPending(true);
-								setErrorMsg("");
-								await new Promise((resolve) => setTimeout(resolve, 2000));
-								setIsPending(false);
+								await enterRoom(normalizedRoomId, () =>
+									joinRoom(normalizedRoomId, normalizedName),
+								);
 							}}
 						>
 							参加
@@ -62,25 +105,23 @@ function Home() {
 						disabled:bg-gray-200 disabled:text-black disabled:cursor-progress"
 						disabled={isPending}
 						onClick={async () => {
-							if (name === "") {
-								setErrorMsg("名前を入力してください");
-								return;
-							}
+							const normalizedName = validateName();
+							if (!normalizedName) return;
 							setIsPending(true);
 							setErrorMsg("");
-							let roomInfo: { playerId: string; roomId: string; token: string };
 							try {
-								const res = await fetch("/api/rooms", {
-									method: "POST",
-									body: JSON.stringify({ hostPlayerName: name }),
+								const room = await createRoom(normalizedName);
+								sessionStorage.setItem(`room:${room.roomId}:token`, room.token);
+								await navigate({
+									to: "/rooms/$roomId",
+									params: { roomId: room.roomId },
 								});
-								roomInfo = await res.json();
-							} catch {
+							} catch (error) {
+								setErrorMsg(
+									error instanceof Error ? error.message : "通信に失敗しました",
+								);
 								setIsPending(false);
-								return;
 							}
-							sessionStorage.setItem(`room:${roomInfo.roomId}:token`, roomInfo.token);
-							navigate({ href: `/rooms/${roomInfo.roomId}/` });
 						}}
 					>
 						ルームの作成

@@ -1,4 +1,4 @@
-import { createRoomId } from "./lib/game";
+import { createRoomId, isValidRoomId } from "./lib/game";
 import type { GameRoom } from "./room";
 
 export { GameRoom } from "./room";
@@ -7,41 +7,71 @@ interface Env {
 	GAME_ROOM: DurableObjectNamespace<GameRoom>;
 }
 
+const MAX_PLAYER_NAME_LENGTH = 24;
+const MAX_ROOM_ID_ATTEMPTS = 8;
+
+function readPlayerName(
+	body: unknown,
+	field: "hostName" | "name",
+): string | undefined {
+	if (typeof body !== "object" || body === null || !(field in body)) return;
+	const value = (body as Record<string, unknown>)[field];
+	if (typeof value !== "string") return;
+	const name = value.trim();
+	if (name.length === 0 || name.length > MAX_PLAYER_NAME_LENGTH) return;
+	return name;
+}
+
+function error(message: string, status: number): Response {
+	return Response.json({ error: message }, { status });
+}
+
 export default {
-	async fetch(
-		request: Request,
-		env: Env,
-		ctx: ExecutionContext,
-	): Promise<Response> {
+	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
 
 		if (url.pathname === "/api/rooms" && request.method === "POST") {
-			const body = await request.json();
-			if (typeof body !== "object" || body === null) {
-				return new Response("illegal body", { status: 400 });
+			const body: unknown = await request.json().catch(() => undefined);
+			const hostName = readPlayerName(body, "hostName");
+			if (!hostName) return error("名前は1〜24文字で入力してください", 422);
+
+			for (let attempt = 0; attempt < MAX_ROOM_ID_ATTEMPTS; attempt++) {
+				const roomId = createRoomId();
+				const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomId));
+				const result = await room.initRoom(hostName);
+				if (result.created) {
+					return Response.json(
+						{ roomId, playerId: result.playerId, token: result.token },
+						{ status: 201 },
+					);
+				}
 			}
-
-			if (
-				!("hostPlayerName" in body) ||
-				typeof body.hostPlayerName !== "string" ||
-				body.hostPlayerName.trim().length === 0
-			) {
-				return new Response("illegal 'hostPlayerName' field", { status: 422 });
-			}
-
-			const hostPlayerName = body.hostPlayerName;
-
-			// TODO 0.3%ぐらいの確率で衝突する
-			const roomId = createRoomId();
-			const DOID = env.GAME_ROOM.idFromName(roomId);
-			const room = env.GAME_ROOM.get(DOID);
-			const hostPlayerInfo = await room.initRoom(hostPlayerName);
-			return Response.json({ roomId, ...hostPlayerInfo }, { status: 200 });
+			return error("ルームを作成できませんでした", 503);
 		}
-		const match = url.pathname.match(/^\/api\/rooms\/([^/]+)$/);
-		if (match && request.method === "GET") {
-			const roomId = match[1];
-			return Response.json({ roomId }, { status: 200 });
+
+		const joinMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
+		if (joinMatch && request.method === "POST") {
+			const roomId = joinMatch[1].toUpperCase();
+			if (!isValidRoomId(roomId)) return error("ルームIDが不正です", 400);
+			const body: unknown = await request.json().catch(() => undefined);
+			const name = readPlayerName(body, "name");
+			if (!name) return error("名前は1〜24文字で入力してください", 422);
+
+			const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomId));
+			const result = await room.joinRoom(name);
+			if (!result.joined) {
+				const responses = {
+					not_found: ["ルームが見つかりません", 404],
+					already_started: ["ゲームはすでに開始しています", 409],
+					full: ["ルームは満員です", 409],
+				} as const;
+				const [message, status] = responses[result.reason];
+				return error(message, status);
+			}
+			return Response.json(
+				{ playerId: result.playerId, token: result.token },
+				{ status: 200 },
+			);
 		}
 		return new Response("Not found", { status: 404 });
 	},
