@@ -12,8 +12,8 @@ export default {
 	): Promise<Response> {
 		const url = new URL(request.url);
 
-		if (url.pathname === "/api/rooms/create") {
-			return Response.json("ok", { status: 200 });
+		if (url.pathname === "/api/rooms" && request.method === "POST") {
+			return Response.json("Room created", { status: 200 });
 		}
 		return new Response("Not found", { status: 404 });
 	},

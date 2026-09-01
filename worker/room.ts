@@ -4,17 +4,20 @@ export type GameStatus = "waiting" | "ready" | "playing";
 
 export interface Player {
 	id: string;
+	tokenHash: string;
 	name: string;
 }
 
 export interface GameState {
 	status: GameStatus;
+	hostPlayerId: string;
 	player: Player[];
 }
 
 function createInitialState(): GameState {
 	return {
 		status: "waiting",
+		hostPlayerId: crypto.randomUUID(),
 		player: [],
 	};
 }
