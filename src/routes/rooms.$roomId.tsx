@@ -3,6 +3,7 @@ import { Check } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { PlayerColor } from "../../worker/lib/board";
 import { type BoardHole, GameBoard } from "../components/GameBoard";
+import { PieceInventory } from "../components/PieceInventory";
 import { useGameRoom } from "../hooks/useGameRoom";
 
 export const Route = createFileRoute("/rooms/$roomId")({
@@ -93,7 +94,7 @@ function RouteComponent() {
 
 	return (
 		<main className="min-h-screen px-4 py-5 text-black sm:px-8 sm:py-8">
-			<header className="mx-auto mb-6 flex w-full max-w-6xl items-center justify-between gap-4">
+			<header className="mx-auto mb-6 flex w-full max-w-360 items-center justify-between gap-4">
 				<div>
 					<p className="text-xs font-bold uppercase">Room</p>
 					<h1 className="font-mono text-2xl font-black sm:text-3xl">
@@ -129,7 +130,7 @@ function RouteComponent() {
 			</header>
 			{notice ? (
 				<div
-					className="mx-auto mb-5 flex w-full max-w-6xl items-start justify-between gap-4 border-2 border-amber-500 bg-amber-50 p-4 text-amber-950"
+					className="mx-auto mb-5 flex w-full max-w-360 items-start justify-between gap-4 border-2 border-amber-500 bg-amber-50 p-4 text-amber-950"
 					aria-live="polite"
 				>
 					<p className="font-bold">{notice}</p>
@@ -143,8 +144,8 @@ function RouteComponent() {
 				</div>
 			) : null}
 
-			<section className="mx-auto grid w-full max-w-6xl items-center gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]">
-				<div className="flex flex-col items-center justify-center gap-4 p-3 sm:p-8">
+			<section className="mx-auto grid w-full max-w-360 items-start gap-6 lg:grid-cols-[18rem_minmax(0,1fr)_18rem]">
+				<div className="order-1 flex flex-col items-center justify-center gap-4 p-3 sm:p-8 lg:order-2 lg:p-4">
 					<div className="relative w-full max-w-160">
 						<GameBoard
 							board={state?.board}
@@ -184,8 +185,14 @@ function RouteComponent() {
 					</p>
 				</div>
 
-				<aside className="flex flex-col-reverse lg:flex-col gap-8 lg:self-stretch">
-					<div className="border border-black flex-1 p-5">
+				<aside className="contents">
+					<div className="order-3 border border-black p-5 lg:order-1 lg:sticky lg:top-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
+						<PieceInventory
+							board={state?.board}
+							players={state?.players ?? []}
+							playerId={playerId}
+						/>
+						<div className="my-5 border-t border-stone-300" />
 						<p className="text-xs font-bold tracking-[0.2em] uppercase">
 							Players
 						</p>
@@ -242,7 +249,9 @@ function RouteComponent() {
 								参加者を読み込んでいます
 							</div>
 						)}
-						<div className="mt-5 bg-stone-100 p-4">
+					</div>
+					<div className="order-2 flex min-h-64 flex-col justify-center gap-5 border p-5 lg:order-3 lg:sticky lg:top-8 lg:justify-start">
+						<div className="bg-stone-100 p-4">
 							<p className="text-xs font-bold text-stone-500">ゲーム状況</p>
 							<p className="mt-1 font-bold">
 								{state?.status === "playing"
@@ -253,39 +262,10 @@ function RouteComponent() {
 							</p>
 						</div>
 						{error ? (
-							<p className="mt-4 text-sm font-bold text-red-700" role="alert">
+							<p className="text-sm font-bold text-red-700" role="alert">
 								{error}
 							</p>
 						) : null}
-						<button
-							type="button"
-							className="mt-5 p-4 border w-full font-bold text-center transition-colors hover:bg-black hover:text-white disabled:bg-stone-100 disabled:text-stone-400"
-							disabled={
-								!isHost ||
-								connectionStatus !== "connected" ||
-								state?.status !== "waiting" ||
-								(state?.players.length ?? 0) < 2
-							}
-							onClick={() => send({ type: "start" })}
-						>
-							ゲームを開始
-						</button>
-						{state?.status !== "waiting" ? (
-							<button
-								type="button"
-								className="mt-3 w-full border border-red-600 p-3 text-sm font-bold text-red-700 transition-colors hover:bg-red-600 hover:text-white disabled:border-stone-300 disabled:bg-stone-100 disabled:text-stone-400"
-								disabled={!isHost || connectionStatus !== "connected"}
-								onClick={() => {
-									if (window.confirm("現在の盤面をリセットしますか？")) {
-										send({ type: "reset" });
-									}
-								}}
-							>
-								試合をリセット
-							</button>
-						) : null}
-					</div>
-					<div className="min-h-64 border p-5 flex flex-col justify-center gap-5">
 						{(me?.colors.length ?? 0) > 1 ? (
 							<fieldset className="flex gap-2" aria-label="配置する駒の色">
 								{me?.colors.map((color) => (
@@ -349,6 +329,35 @@ function RouteComponent() {
 							{otrioReserved ? <Check aria-hidden="true" size={18} /> : null}
 							{isMyTurn ? "「オートリオ！」を予約" : "「オートリオ！」と言う"}
 						</button>
+						<div className="border-t border-stone-300 pt-5">
+							<button
+								type="button"
+								className="w-full border p-4 font-bold text-center transition-colors hover:bg-black hover:text-white disabled:bg-stone-100 disabled:text-stone-400"
+								disabled={
+									!isHost ||
+									connectionStatus !== "connected" ||
+									state?.status !== "waiting" ||
+									(state?.players.length ?? 0) < 2
+								}
+								onClick={() => send({ type: "start" })}
+							>
+								ゲームを開始
+							</button>
+							{state?.status !== "waiting" ? (
+								<button
+									type="button"
+									className="mt-3 w-full border border-red-600 p-3 text-sm font-bold text-red-700 transition-colors hover:bg-red-600 hover:text-white disabled:border-stone-300 disabled:bg-stone-100 disabled:text-stone-400"
+									disabled={!isHost || connectionStatus !== "connected"}
+									onClick={() => {
+										if (window.confirm("現在の盤面をリセットしますか？")) {
+											send({ type: "reset" });
+										}
+									}}
+								>
+									試合をリセット
+								</button>
+							) : null}
+						</div>
 					</div>
 				</aside>
 			</section>
