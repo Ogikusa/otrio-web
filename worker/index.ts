@@ -62,7 +62,6 @@ export default {
 			if (!result.joined) {
 				const responses = {
 					not_found: ["ルームが見つかりません", 404],
-					already_started: ["ゲームはすでに開始しています", 409],
 					full: ["ルームは満員です", 409],
 				} as const;
 				const [message, status] = responses[result.reason];
@@ -72,6 +71,17 @@ export default {
 				{ playerId: result.playerId, token: result.token },
 				{ status: 200 },
 			);
+		}
+
+		const webSocketMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/ws$/);
+		if (webSocketMatch && request.method === "GET") {
+			const roomId = webSocketMatch[1].toUpperCase();
+			if (!isValidRoomId(roomId)) return error("ルームIDが不正です", 400);
+			if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+				return error("WebSocket upgradeが必要です", 426);
+			}
+			const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomId));
+			return room.fetch(request);
 		}
 		return new Response("Not found", { status: 404 });
 	},

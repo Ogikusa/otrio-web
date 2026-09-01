@@ -63,6 +63,13 @@ export class GameBoard {
 		return this.boardData.map((cell) => [...cell]) as BoardData;
 	}
 
+	count(color: PlayerColor, size: PieceSize): number {
+		return this.boardData.reduce(
+			(total, cell) => total + (cell[size] === color ? 1 : 0),
+			0,
+		);
+	}
+
 	hasWon(color: PlayerColor): boolean {
 		const lines = [
 			[0, 1, 2],

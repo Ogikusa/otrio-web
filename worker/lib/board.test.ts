@@ -21,6 +21,16 @@ describe("GameBoard", () => {
 		assert.equal(board.place(0, 3, 0), false);
 	});
 
+	it("counts used pieces by color and size", () => {
+		const board = new GameBoard(createInitBoardData());
+		board.place(0, 1, 0);
+		board.place(1, 1, 0);
+		board.place(2, 1, 1);
+		assert.equal(board.count(0, 1), 2);
+		assert.equal(board.count(1, 1), 1);
+		assert.equal(board.count(0, 2), 0);
+	});
+
 	it("detects three pieces of the same size on a line", () => {
 		const board = new GameBoard(createInitBoardData());
 		for (const position of [0, 4, 8]) board.place(position, 2, 0);
