@@ -84,13 +84,14 @@ export function useGameRoom(roomId: string) {
 					setConnectionStatus("disconnected");
 					return;
 				}
-				if (event.code === 4001 || event.code === 4004) {
+				if (event.code === 4004) {
+					setRemovedReason("ルームが見つからないか、すでに終了しました");
+					setConnectionStatus("disconnected");
+					return;
+				}
+				if (event.code === 4001) {
 					setConnectionStatus("error");
-					setError(
-						event.code === 4001
-							? "認証に失敗しました。ホームから参加し直してください。"
-							: "ルームが見つかりません",
-					);
+					setError("認証に失敗しました。ホームから参加し直してください。");
 					return;
 				}
 				retryCount += 1;

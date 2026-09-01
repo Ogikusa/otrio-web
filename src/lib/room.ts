@@ -45,3 +45,10 @@ export async function joinRoom(
 	);
 	return readResponse<PlayerCredentials>(response);
 }
+
+export async function roomExists(roomId: string): Promise<boolean> {
+	const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`);
+	if (response.status === 404) return false;
+	await readResponse<{ exists: true }>(response);
+	return true;
+}

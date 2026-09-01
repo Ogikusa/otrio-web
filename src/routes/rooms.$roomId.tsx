@@ -5,6 +5,7 @@ import type { PlayerColor } from "../../worker/lib/board";
 import { type BoardHole, GameBoard } from "../components/GameBoard";
 import { PieceInventory } from "../components/PieceInventory";
 import { useGameRoom } from "../hooks/useGameRoom";
+import { joinRoom, roomExists } from "../lib/room";
 
 export const Route = createFileRoute("/rooms/$roomId")({
 	component: RouteComponent,
@@ -12,6 +13,131 @@ export const Route = createFileRoute("/rooms/$roomId")({
 
 function RouteComponent() {
 	const { roomId } = Route.useParams();
+	const [hasToken, setHasToken] = useState(() =>
+		typeof window === "undefined"
+			? false
+			: Boolean(sessionStorage.getItem(`room:${roomId}:token`)),
+	);
+
+	return hasToken ? (
+		<GameRoom roomId={roomId} />
+	) : (
+		<RoomJoin roomId={roomId} onJoined={() => setHasToken(true)} />
+	);
+}
+
+function RoomJoin({
+	roomId,
+	onJoined,
+}: {
+	roomId: string;
+	onJoined: () => void;
+}) {
+	const navigate = useNavigate({ from: "/rooms/$roomId" });
+	const [name, setName] = useState("");
+	const [isPending, setIsPending] = useState(false);
+	const [isChecking, setIsChecking] = useState(true);
+	const [roomFound, setRoomFound] = useState(false);
+	const [error, setError] = useState<string>();
+
+	useEffect(() => {
+		let active = true;
+		roomExists(roomId)
+			.then((exists) => {
+				if (!active) return;
+				setRoomFound(exists);
+				if (!exists) setError("ルームが見つかりません");
+			})
+			.catch((cause) => {
+				if (!active) return;
+				setRoomFound(false);
+				setError(cause instanceof Error ? cause.message : "通信に失敗しました");
+			})
+			.finally(() => {
+				if (active) setIsChecking(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [roomId]);
+
+	return (
+		<main className="flex min-h-screen items-center justify-center px-4">
+			<div className="w-full max-w-md border border-black p-6">
+				<p className="text-xs font-bold uppercase">Room</p>
+				<h1 className="font-mono text-3xl font-black">{roomId}</h1>
+				{isChecking ? (
+					<p className="mt-6 font-bold">ルームを確認しています…</p>
+				) : !roomFound ? (
+					<>
+						<p className="mt-6 font-bold text-red-700" role="alert">
+							{error}
+						</p>
+						<button
+							type="button"
+							className="mt-4 w-full border border-black p-3 font-bold hover:bg-black hover:text-white"
+							onClick={() => navigate({ to: "/" })}
+						>
+							ホームへ戻る
+						</button>
+					</>
+				) : (
+					<form
+						className="mt-6 space-y-4"
+						onSubmit={async (event) => {
+							event.preventDefault();
+							const normalizedName = name.trim();
+							if (!normalizedName) {
+								setError("名前を入力してください");
+								return;
+							}
+							setIsPending(true);
+							try {
+								const credentials = await joinRoom(roomId, normalizedName);
+								sessionStorage.setItem(
+									`room:${roomId}:token`,
+									credentials.token,
+								);
+								onJoined();
+							} catch (cause) {
+								setError(
+									cause instanceof Error ? cause.message : "通信に失敗しました",
+								);
+								setIsPending(false);
+							}
+						}}
+					>
+						<label className="block font-bold" htmlFor="player-name">
+							参加名
+						</label>
+						<input
+							id="player-name"
+							className="h-14 w-full border border-black p-2 text-xl"
+							value={name}
+							maxLength={24}
+							disabled={isPending}
+							onChange={(event) => setName(event.target.value)}
+						/>
+						{error ? (
+							<p className="font-bold text-red-700" role="alert">
+								{error}
+							</p>
+						) : null}
+						<button
+							type="submit"
+							className="w-full border border-black p-4 font-bold hover:bg-black hover:text-white disabled:bg-stone-100 disabled:text-stone-400"
+							disabled={isPending}
+						>
+							{isPending ? "参加中…" : "ルームに参加"}
+						</button>
+					</form>
+				)}
+			</div>
+		</main>
+	);
+}
+
+function GameRoom({ roomId }: { roomId: string }) {
 	const navigate = useNavigate({ from: "/rooms/$roomId" });
 	const [selectedHole, setSelectedHole] = useState<BoardHole>();
 	const [selectedPieceColor, setSelectedPieceColor] = useState<PlayerColor>(0);
@@ -59,6 +185,16 @@ function RouteComponent() {
 	const claimLocked = playerId
 		? state?.otrioClaimLockedPlayerIds.includes(playerId) === true
 		: false;
+	const orderedPlayers = state
+		? [
+				...state.gamePlayerIds
+					.map((id) => state.players.find((player) => player.id === id))
+					.filter((player) => player !== undefined),
+				...state.players.filter(
+					(player) => !state.gamePlayerIds.includes(player.id),
+				),
+			]
+		: [];
 
 	useEffect(() => {
 		if (me?.colors.length && !me.colors.includes(selectedPieceColor)) {
@@ -174,7 +310,7 @@ function RouteComponent() {
 					<div className="order-3 border border-black p-5 lg:order-1 lg:sticky lg:top-8 lg:max-h-[80vh] lg:overflow-y-auto">
 						<PieceInventory
 							board={state?.board}
-							players={state?.players ?? []}
+							players={orderedPlayers}
 							playerId={playerId}
 						/>
 						<div className="my-5 border-t border-stone-300" />
@@ -182,14 +318,15 @@ function RouteComponent() {
 							Players
 						</p>
 						<h2 className="mt-1 text-xl font-black">プレイヤー</h2>
-						{state?.players.length ? (
+						{orderedPlayers.length ? (
 							<ul className="mt-5 space-y-2">
-								{state.players.map((player) => (
+								{orderedPlayers.map((player, index) => (
 									<li
 										key={player.id}
 										className="flex items-center justify-between border border-stone-300 px-3 py-2 text-sm"
 									>
 										<span className="font-bold">
+											{player.isPlaying ? `${index + 1}. ` : ""}
 											<span className="mr-2 inline-flex gap-1">
 												{player.colors.map((color) => (
 													<span
@@ -200,7 +337,7 @@ function RouteComponent() {
 											</span>
 											{player.name}
 											{player.id === playerId ? "（あなた）" : ""}
-											{state.status !== "waiting" && !player.isPlaying
+											{state?.status !== "waiting" && !player.isPlaying
 												? "（次戦待機）"
 												: ""}
 										</span>
@@ -351,6 +488,25 @@ function RouteComponent() {
 							>
 								ゲームを開始
 							</button>
+							<label className="mt-3 flex items-center gap-2 text-sm font-bold">
+								<input
+									type="checkbox"
+									className="size-4 accent-black"
+									checked={state?.randomizeTurnOrder ?? false}
+									disabled={
+										!isHost ||
+										connectionStatus !== "connected" ||
+										state?.status !== "waiting"
+									}
+									onChange={(event) =>
+										send({
+											type: "setRandomizeTurnOrder",
+											enabled: event.target.checked,
+										})
+									}
+								/>
+								開始時に順番をランダムにする
+							</label>
 							{state?.status !== "waiting" ? (
 								<button
 									type="button"

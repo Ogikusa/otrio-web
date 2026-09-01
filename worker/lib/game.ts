@@ -27,11 +27,13 @@ export interface GameState {
 	status: GameStatus;
 	players: Player[];
 	gamePlayerIds: string[];
+	randomizeTurnOrder: boolean;
 	currentPlayer: string;
 	winnerId: string | null;
 	otrioClaimLockedPlayerIds: string[];
 	board: BoardData;
 	lastActivityAt: number;
+	hostDisconnectedAt?: number | null;
 }
 
 export interface PublicPlayer {
@@ -46,6 +48,7 @@ export interface PublicGameState {
 	status: GameStatus;
 	players: PublicPlayer[];
 	gamePlayerIds: string[];
+	randomizeTurnOrder: boolean;
 	currentPlayer: string;
 	winnerId: string | null;
 	otrioClaimLockedPlayerIds: string[];
@@ -75,6 +78,7 @@ export function toPublicGameState(state: GameState): PublicGameState {
 			};
 		}),
 		gamePlayerIds,
+		randomizeTurnOrder: state.randomizeTurnOrder ?? false,
 		currentPlayer: state.currentPlayer,
 		winnerId: state.winnerId ?? null,
 		otrioClaimLockedPlayerIds: state.otrioClaimLockedPlayerIds ?? [],

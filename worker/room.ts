@@ -13,12 +13,14 @@ interface SocketAttachment {
 	playerId: string | null;
 }
 
-const ROOM_CLEANUP_GRACE_MS = 30 * 60 * 1000;
+const ROOM_CLEANUP_GRACE_MS = 5 * 60 * 1000;
+const HOST_DISCONNECT_GRACE_MS = 5 * 60 * 1000;
 
 type ClientMessage =
 	| { type: "auth"; token: string }
 	| { type: "ping" }
 	| { type: "start" }
+	| { type: "setRandomizeTurnOrder"; enabled: boolean }
 	| { type: "reset" }
 	| { type: "leave" }
 	| { type: "kick"; playerId: string }
@@ -41,6 +43,13 @@ function parseClientMessage(
 			return;
 		if (value.type === "ping") return { type: "ping" };
 		if (value.type === "start") return { type: "start" };
+		if (
+			value.type === "setRandomizeTurnOrder" &&
+			"enabled" in value &&
+			typeof value.enabled === "boolean"
+		) {
+			return { type: "setRandomizeTurnOrder", enabled: value.enabled };
+		}
 		if (value.type === "reset") return { type: "reset" };
 		if (value.type === "leave") return { type: "leave" };
 		if (
@@ -88,6 +97,10 @@ export class GameRoom extends DurableObject {
 		return await this.ctx.storage.get<GameState>("state");
 	}
 
+	async roomExists(): Promise<boolean> {
+		return (await this.getState()) !== undefined;
+	}
+
 	async initRoom(hostPlayerName: string) {
 		const current = await this.getState();
 
@@ -101,11 +114,13 @@ export class GameRoom extends DurableObject {
 			status: "waiting",
 			players: [player],
 			gamePlayerIds: [],
+			randomizeTurnOrder: false,
 			currentPlayer: player.id,
 			winnerId: null,
 			otrioClaimLockedPlayerIds: [],
 			board: createInitBoardData(),
 			lastActivityAt: Date.now(),
+			hostDisconnectedAt: null,
 		};
 
 		await this.ctx.storage.put("state", state);
@@ -145,9 +160,6 @@ export class GameRoom extends DurableObject {
 		if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
 			return new Response("WebSocket upgrade required", { status: 426 });
 		}
-		if (!(await this.getState())) {
-			return new Response("Room not found", { status: 404 });
-		}
 
 		const pair = new WebSocketPair();
 		const [client, server] = Object.values(pair);
@@ -182,6 +194,10 @@ export class GameRoom extends DurableObject {
 		}
 		if (parsed.type === "start") {
 			await this.startGame(ws, attachment.playerId);
+			return;
+		}
+		if (parsed.type === "setRandomizeTurnOrder") {
+			await this.setRandomizeTurnOrder(ws, attachment.playerId, parsed.enabled);
 			return;
 		}
 		if (parsed.type === "reset") {
@@ -219,22 +235,45 @@ export class GameRoom extends DurableObject {
 		this.send(ws, { type: "error", message: "すでに認証済みです" });
 	}
 
-	async webSocketClose(): Promise<void> {
-		await this.scheduleCleanupIfEmpty();
+	async webSocketClose(ws: WebSocket): Promise<void> {
+		await this.handleSocketDisconnect(ws);
 	}
 
-	async webSocketError(): Promise<void> {
-		await this.scheduleCleanupIfEmpty();
+	async webSocketError(ws: WebSocket): Promise<void> {
+		await this.handleSocketDisconnect(ws);
 	}
 
 	async alarm(): Promise<void> {
+		const state = await this.getState();
+		if (!state) return;
+		const host = state.players.find(({ role }) => role === "host");
+		if (host && !this.hasPlayerSocket(host.id)) {
+			const disconnectedAt = state.hostDisconnectedAt ?? Date.now();
+			if (state.hostDisconnectedAt == null) {
+				state.hostDisconnectedAt = disconnectedAt;
+				await this.setState(state);
+			}
+			if (Date.now() - disconnectedAt < HOST_DISCONNECT_GRACE_MS) {
+				await this.ctx.storage.setAlarm(
+					disconnectedAt + HOST_DISCONNECT_GRACE_MS,
+				);
+				return;
+			}
+
+			const reason = "ホストの切断が5分間続いたため、ルームを終了しました";
+			for (const socket of this.ctx.getWebSockets()) {
+				this.send(socket, { type: "removed", reason });
+				socket.close(4004, reason);
+			}
+			await this.ctx.storage.deleteAll();
+			return;
+		}
+
 		if (this.hasAuthenticatedSockets()) {
 			await this.ctx.storage.deleteAlarm();
 			return;
 		}
 
-		const state = await this.getState();
-		if (!state) return;
 		const inactiveFor = Date.now() - state.lastActivityAt;
 		if (inactiveFor < ROOM_CLEANUP_GRACE_MS) {
 			await this.ctx.storage.setAlarm(
@@ -253,28 +292,39 @@ export class GameRoom extends DurableObject {
 		ws: WebSocket,
 		token: string,
 	): Promise<void> {
-		const state = await this.getState();
-		if (!state) {
+		const tokenHash = await hashToken(token);
+		const result = await this.ctx.storage.transaction(async (transaction) => {
+			const state = await transaction.get<GameState>("state");
+			if (!state) return { error: "not_found" as const };
+			const player = state.players.find(
+				(candidate) => candidate.tokenHash === tokenHash,
+			);
+			if (!player) return { error: "authentication_failed" as const };
+			state.lastActivityAt = Date.now();
+			if (player.role === "host") state.hostDisconnectedAt = null;
+			await transaction.put("state", state);
+			return { state, player };
+		});
+
+		if ("error" in result && result.error === "not_found") {
 			ws.close(4004, "Room not found");
 			return;
 		}
-
-		const tokenHash = await hashToken(token);
-		const player = state.players.find(
-			(candidate) => candidate.tokenHash === tokenHash,
-		);
-		if (!player) {
+		if ("error" in result) {
 			this.send(ws, { type: "error", message: "認証に失敗しました" });
 			ws.close(4001, "Authentication failed");
 			return;
 		}
 
-		ws.serializeAttachment({ playerId: player.id } satisfies SocketAttachment);
-		await this.ctx.storage.deleteAlarm();
-		state.lastActivityAt = Date.now();
-		await this.setState(state);
-		this.send(ws, { type: "authenticated", playerId: player.id });
-		this.send(ws, { type: "state", state: toPublicGameState(state) });
+		ws.serializeAttachment({
+			playerId: result.player.id,
+		} satisfies SocketAttachment);
+		if (result.player.role === "host") await this.ctx.storage.deleteAlarm();
+		this.send(ws, { type: "authenticated", playerId: result.player.id });
+		this.send(ws, {
+			type: "state",
+			state: toPublicGameState(result.state),
+		});
 	}
 
 	private async startGame(ws: WebSocket, playerId: string): Promise<void> {
@@ -289,10 +339,39 @@ export class GameRoom extends DurableObject {
 			if (state.players.length < 2) return { error: "2人以上必要です" };
 
 			state.status = "playing";
-			state.gamePlayerIds = state.players.map(({ id }) => id);
+			const playerIds = state.players.map(({ id }) => id);
+			state.gamePlayerIds = state.randomizeTurnOrder
+				? this.shuffle(playerIds)
+				: playerIds;
 			state.currentPlayer = state.gamePlayerIds[0];
 			state.winnerId = null;
 			state.otrioClaimLockedPlayerIds = [];
+			state.lastActivityAt = Date.now();
+			await transaction.put("state", state);
+			return { state };
+		});
+
+		if ("error" in result) {
+			this.send(ws, { type: "error", message: result.error });
+			return;
+		}
+		this.broadcastState(result.state);
+	}
+
+	private async setRandomizeTurnOrder(
+		ws: WebSocket,
+		playerId: string,
+		enabled: boolean,
+	): Promise<void> {
+		const result = await this.ctx.storage.transaction(async (transaction) => {
+			const state = await transaction.get<GameState>("state");
+			if (!state) return { error: "ルームが見つかりません" };
+			const player = state.players.find(({ id }) => id === playerId);
+			if (player?.role !== "host") return { error: "hostのみ設定できます" };
+			if (state.status !== "waiting") {
+				return { error: "設定はゲーム開始前のみ変更できます" };
+			}
+			state.randomizeTurnOrder = enabled;
 			state.lastActivityAt = Date.now();
 			await transaction.put("state", state);
 			return { state };
@@ -407,9 +486,62 @@ export class GameRoom extends DurableObject {
 		});
 	}
 
+	private hasPlayerSocket(playerId: string, excluded?: WebSocket): boolean {
+		return this.ctx.getWebSockets().some((socket) => {
+			if (socket === excluded) return false;
+			const attachment =
+				socket.deserializeAttachment() as SocketAttachment | null;
+			return attachment?.playerId === playerId;
+		});
+	}
+
+	private async handleSocketDisconnect(ws: WebSocket): Promise<void> {
+		const attachment = ws.deserializeAttachment() as SocketAttachment | null;
+		if (!attachment?.playerId) {
+			await this.scheduleCleanupIfEmpty();
+			return;
+		}
+		if (this.hasPlayerSocket(attachment.playerId, ws)) return;
+
+		const disconnectedAt = Date.now();
+		const hostDisconnectedAt = await this.ctx.storage.transaction(
+			async (transaction) => {
+				const state = await transaction.get<GameState>("state");
+				if (!state) return null;
+				const player = state.players.find(
+					({ id }) => id === attachment.playerId,
+				);
+				if (player?.role !== "host") return null;
+				state.hostDisconnectedAt ??= disconnectedAt;
+				await transaction.put("state", state);
+				return state.hostDisconnectedAt;
+			},
+		);
+		if (hostDisconnectedAt !== null) {
+			await this.ctx.storage.setAlarm(
+				hostDisconnectedAt + HOST_DISCONNECT_GRACE_MS,
+			);
+			return;
+		}
+		await this.scheduleCleanupIfEmpty();
+	}
+
 	private async scheduleCleanupIfEmpty(): Promise<void> {
 		if (this.hasAuthenticatedSockets()) return;
-		if (!(await this.getState())) return;
+		const state = await this.getState();
+		if (!state) return;
+		const host = state.players.find(({ role }) => role === "host");
+		if (host && !this.hasPlayerSocket(host.id)) {
+			const disconnectedAt = state.hostDisconnectedAt ?? Date.now();
+			if (state.hostDisconnectedAt == null) {
+				state.hostDisconnectedAt = disconnectedAt;
+				await this.setState(state);
+			}
+			await this.ctx.storage.setAlarm(
+				Math.max(Date.now(), disconnectedAt + HOST_DISCONNECT_GRACE_MS),
+			);
+			return;
+		}
 		await this.ctx.storage.setAlarm(Date.now() + ROOM_CLEANUP_GRACE_MS);
 	}
 
@@ -527,6 +659,17 @@ export class GameRoom extends DurableObject {
 
 	private getGamePlayerIds(state: GameState): string[] {
 		return state.gamePlayerIds ?? state.players.map(({ id }) => id);
+	}
+
+	private shuffle<T>(values: T[]): T[] {
+		const shuffled = [...values];
+		for (let index = shuffled.length - 1; index > 0; index--) {
+			const random = new Uint32Array(1);
+			crypto.getRandomValues(random);
+			const target = random[0] % (index + 1);
+			[shuffled[index], shuffled[target]] = [shuffled[target], shuffled[index]];
+		}
+		return shuffled;
 	}
 
 	private broadcastState(state: GameState): void {

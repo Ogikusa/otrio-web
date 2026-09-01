@@ -49,6 +49,17 @@ export default {
 			return error("ルームを作成できませんでした", 503);
 		}
 
+		const roomMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)$/);
+		if (roomMatch && request.method === "GET") {
+			const roomId = roomMatch[1].toUpperCase();
+			if (!isValidRoomId(roomId)) return error("ルームIDが不正です", 400);
+			const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomId));
+			if (!(await room.roomExists())) {
+				return error("ルームが見つかりません", 404);
+			}
+			return Response.json({ exists: true });
+		}
+
 		const joinMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
 		if (joinMatch && request.method === "POST") {
 			const roomId = joinMatch[1].toUpperCase();
