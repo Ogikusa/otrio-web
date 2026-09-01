@@ -128,21 +128,6 @@ function RouteComponent() {
 					</button>
 				</div>
 			</header>
-			{notice ? (
-				<div
-					className="mx-auto mb-5 flex w-full max-w-360 items-start justify-between gap-4 border-2 border-amber-500 bg-amber-50 p-4 text-amber-950"
-					aria-live="polite"
-				>
-					<p className="font-bold">{notice}</p>
-					<button
-						type="button"
-						className="shrink-0 border border-amber-700 px-2 py-1 text-xs font-bold hover:bg-amber-700 hover:text-white"
-						onClick={clearNotice}
-					>
-						閉じる
-					</button>
-				</div>
-			) : null}
 
 			<section className="mx-auto grid w-full max-w-360 items-start gap-6 lg:grid-cols-[18rem_minmax(0,1fr)_18rem]">
 				<div className="order-1 flex flex-col items-center justify-center gap-4 p-3 sm:p-8 lg:order-2 lg:p-4">
@@ -186,7 +171,7 @@ function RouteComponent() {
 				</div>
 
 				<aside className="contents">
-					<div className="order-3 border border-black p-5 lg:order-1 lg:sticky lg:top-8 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
+					<div className="order-3 border border-black p-5 lg:order-1 lg:sticky lg:top-8 lg:max-h-[80vh] lg:overflow-y-auto">
 						<PieceInventory
 							board={state?.board}
 							players={state?.players ?? []}
@@ -337,6 +322,21 @@ function RouteComponent() {
 								"「オートリオ！」と言う"
 							)}
 						</button>
+						{notice ? (
+							<div
+								className="mx-auto mb-5 flex flex-col w-full max-w-360 items-start justify-between gap-4 border-2 border-amber-500 bg-amber-50 p-4 text-amber-950"
+								aria-live="polite"
+							>
+								<p className="font-bold">{notice}</p>
+								<button
+									type="button"
+									className="shrink-0 border border-amber-700 w-full px-2 py-1 text-xs font-bold hover:bg-amber-700 hover:text-white"
+									onClick={clearNotice}
+								>
+									閉じる
+								</button>
+							</div>
+						) : null}
 						<div className="border-t border-stone-300 pt-5">
 							<button
 								type="button"

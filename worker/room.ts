@@ -474,7 +474,7 @@ export class GameRoom extends DurableObject {
 			this.send(ws, {
 				type: "notice",
 				message:
-					"「オートリオ！」を予約して配置しましたが、勝利条件を満たしていませんでした。",
+					"「オートリオ！」と言いながら配置しましたが、勝利条件を満たしていませんでした。",
 			});
 		}
 	}
