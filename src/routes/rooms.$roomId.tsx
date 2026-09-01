@@ -327,7 +327,15 @@ function RouteComponent() {
 							}}
 						>
 							{otrioReserved ? <Check aria-hidden="true" size={18} /> : null}
-							{isMyTurn ? "「オートリオ！」を予約" : "「オートリオ！」と言う"}
+							{isMyTurn ? (
+								<span>
+									設置と一緒に
+									<br />
+									「オートリオ！」と言う
+								</span>
+							) : (
+								"「オートリオ！」と言う"
+							)}
 						</button>
 						<div className="border-t border-stone-300 pt-5">
 							<button
