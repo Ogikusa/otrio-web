@@ -5,6 +5,8 @@ export { GameRoom } from "./room";
 
 interface Env {
 	GAME_ROOM: DurableObjectNamespace<GameRoom>;
+	ROOM_CREATE_RATE_LIMITER: RateLimit;
+	ROOM_ACCESS_RATE_LIMITER: RateLimit;
 }
 
 const MAX_PLAYER_NAME_LENGTH = 24;
@@ -26,11 +28,26 @@ function error(message: string, status: number): Response {
 	return Response.json({ error: message }, { status });
 }
 
+function rateLimitKey(request: Request, operation: string): string {
+	return `${request.headers.get("cf-connecting-ip") ?? "unknown"}:${operation}`;
+}
+
+function tooManyRequests(): Response {
+	return Response.json(
+		{ error: "操作が多すぎます。しばらく待ってから再試行してください" },
+		{ status: 429, headers: { "retry-after": "60" } },
+	);
+}
+
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
 
 		if (url.pathname === "/api/rooms" && request.method === "POST") {
+			const rateLimit = await env.ROOM_CREATE_RATE_LIMITER.limit({
+				key: rateLimitKey(request, "create"),
+			});
+			if (!rateLimit.success) return tooManyRequests();
 			const body: unknown = await request.json().catch(() => undefined);
 			const hostName = readPlayerName(body, "hostName");
 			if (!hostName) return error("名前は1〜24文字で入力してください", 422);
@@ -51,6 +68,10 @@ export default {
 
 		const roomMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)$/);
 		if (roomMatch && request.method === "GET") {
+			const rateLimit = await env.ROOM_ACCESS_RATE_LIMITER.limit({
+				key: rateLimitKey(request, "lookup"),
+			});
+			if (!rateLimit.success) return tooManyRequests();
 			const roomId = roomMatch[1].toUpperCase();
 			if (!isValidRoomId(roomId)) return error("ルームIDが不正です", 400);
 			const room = env.GAME_ROOM.get(env.GAME_ROOM.idFromName(roomId));
@@ -62,6 +83,10 @@ export default {
 
 		const joinMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
 		if (joinMatch && request.method === "POST") {
+			const rateLimit = await env.ROOM_ACCESS_RATE_LIMITER.limit({
+				key: rateLimitKey(request, "join"),
+			});
+			if (!rateLimit.success) return tooManyRequests();
 			const roomId = joinMatch[1].toUpperCase();
 			if (!isValidRoomId(roomId)) return error("ルームIDが不正です", 400);
 			const body: unknown = await request.json().catch(() => undefined);
@@ -86,6 +111,10 @@ export default {
 
 		const webSocketMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/ws$/);
 		if (webSocketMatch && request.method === "GET") {
+			const rateLimit = await env.ROOM_ACCESS_RATE_LIMITER.limit({
+				key: rateLimitKey(request, "websocket"),
+			});
+			if (!rateLimit.success) return tooManyRequests();
 			const roomId = webSocketMatch[1].toUpperCase();
 			if (!isValidRoomId(roomId)) return error("ルームIDが不正です", 400);
 			if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {

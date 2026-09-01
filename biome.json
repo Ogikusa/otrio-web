@@ -10,8 +10,11 @@
 		"includes": [
 			"**/src/**/*",
 			"**/worker/**/*",
+			"**/test/**/*",
 			"**/.vscode/**/*",
 			"**/index.html",
+			"**/package.json",
+			"**/vitest.config.ts",
 			"**/vite.config.ts",
 			"!**/src/routeTree.gen.ts",
 			"!**/src/styles.css"
@@ -34,4 +37,3 @@
 		}
 	}
 }
-

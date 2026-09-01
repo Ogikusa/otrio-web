@@ -11,10 +11,14 @@ import { hashToken } from "./lib/token";
 
 interface SocketAttachment {
 	playerId: string | null;
+	messageWindowStartedAt?: number;
+	messageCount?: number;
 }
 
 const ROOM_CLEANUP_GRACE_MS = 5 * 60 * 1000;
 const HOST_DISCONNECT_GRACE_MS = 5 * 60 * 1000;
+const MESSAGE_RATE_WINDOW_MS = 10 * 1000;
+const MAX_MESSAGES_PER_WINDOW = 60;
 
 type ClientMessage =
 	| { type: "auth"; token: string }
@@ -102,28 +106,25 @@ export class GameRoom extends DurableObject {
 	}
 
 	async initRoom(hostPlayerName: string) {
-		const current = await this.getState();
-
-		if (current) {
-			return { created: false as const };
-		}
-
 		const { player, rawToken } = await createPlayer(hostPlayerName, "host");
-
-		const state: GameState = {
-			status: "waiting",
-			players: [player],
-			gamePlayerIds: [],
-			randomizeTurnOrder: false,
-			currentPlayer: player.id,
-			winnerId: null,
-			otrioClaimLockedPlayerIds: [],
-			board: createInitBoardData(),
-			lastActivityAt: Date.now(),
-			hostDisconnectedAt: null,
-		};
-
-		await this.ctx.storage.put("state", state);
+		const created = await this.ctx.storage.transaction(async (transaction) => {
+			if (await transaction.get<GameState>("state")) return false;
+			const state: GameState = {
+				status: "waiting",
+				players: [player],
+				gamePlayerIds: [],
+				randomizeTurnOrder: false,
+				currentPlayer: player.id,
+				winnerId: null,
+				otrioClaimLockedPlayerIds: [],
+				board: createInitBoardData(),
+				lastActivityAt: Date.now(),
+				hostDisconnectedAt: null,
+			};
+			await transaction.put("state", state);
+			return true;
+		});
+		if (!created) return { created: false as const };
 		await this.ctx.storage.setAlarm(Date.now() + ROOM_CLEANUP_GRACE_MS);
 
 		return {
@@ -138,17 +139,21 @@ export class GameRoom extends DurableObject {
 	}
 
 	async joinRoom(playerName: string) {
-		const state = await this.getState();
-		if (!state) return { joined: false as const, reason: "not_found" as const };
-		if (state.players.length >= MAX_PLAYERS) {
-			return { joined: false as const, reason: "full" as const };
-		}
-
 		const { player, rawToken } = await createPlayer(playerName, "guest");
-		state.players.push(player);
-		state.lastActivityAt = Date.now();
-		await this.setState(state);
-		this.broadcastState(state);
+		const result = await this.ctx.storage.transaction(async (transaction) => {
+			const state = await transaction.get<GameState>("state");
+			if (!state)
+				return { joined: false as const, reason: "not_found" as const };
+			if (state.players.length >= MAX_PLAYERS) {
+				return { joined: false as const, reason: "full" as const };
+			}
+			state.players.push(player);
+			state.lastActivityAt = Date.now();
+			await transaction.put("state", state);
+			return { joined: true as const, state };
+		});
+		if (!result.joined) return result;
+		this.broadcastState(result.state);
 		return {
 			joined: true as const,
 			playerId: player.id,
@@ -172,6 +177,14 @@ export class GameRoom extends DurableObject {
 		ws: WebSocket,
 		message: string | ArrayBuffer,
 	): Promise<void> {
+		if (!this.consumeMessageRateLimit(ws)) {
+			this.send(ws, {
+				type: "error",
+				message: "メッセージの送信回数が多すぎます",
+			});
+			ws.close(4008, "Message rate limit exceeded");
+			return;
+		}
 		const parsed = parseClientMessage(message);
 		if (!parsed) {
 			this.send(ws, { type: "error", message: "不正なメッセージです" });
@@ -316,7 +329,9 @@ export class GameRoom extends DurableObject {
 			return;
 		}
 
+		const attachment = ws.deserializeAttachment() as SocketAttachment | null;
 		ws.serializeAttachment({
+			...attachment,
 			playerId: result.player.id,
 		} satisfies SocketAttachment);
 		if (result.player.role === "host") await this.ctx.storage.deleteAlarm();
@@ -685,6 +700,25 @@ export class GameRoom extends DurableObject {
 
 	private send(ws: WebSocket, message: unknown): void {
 		ws.send(JSON.stringify(message));
+	}
+
+	private consumeMessageRateLimit(ws: WebSocket): boolean {
+		const now = Date.now();
+		const attachment =
+			(ws.deserializeAttachment() as SocketAttachment | null) ?? {
+				playerId: null,
+			};
+		if (
+			attachment.messageWindowStartedAt === undefined ||
+			now - attachment.messageWindowStartedAt >= MESSAGE_RATE_WINDOW_MS
+		) {
+			attachment.messageWindowStartedAt = now;
+			attachment.messageCount = 1;
+		} else {
+			attachment.messageCount = (attachment.messageCount ?? 0) + 1;
+		}
+		ws.serializeAttachment(attachment);
+		return attachment.messageCount <= MAX_MESSAGES_PER_WINDOW;
 	}
 
 	async deleteRoom(): Promise<void> {
