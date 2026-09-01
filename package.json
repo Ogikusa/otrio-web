@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.5",
+    "@cloudflare/vite-plugin": "^1.54.2",
     "@tanstack/devtools-vite": "latest",
     "@tanstack/router-cli": "^1.132.0",
     "@tanstack/router-plugin": "latest",
@@ -33,12 +34,7 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.1",
     "typescript": "^6.0.2",
-    "vite": "^8.0.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "lightningcss"
-    ]
+    "vite": "^8.0.0",
+    "wrangler": "^4.127.1"
   }
 }
