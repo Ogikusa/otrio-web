@@ -3,6 +3,14 @@ import { useState } from "react";
 import { createRoom } from "../lib/room";
 
 export const Route = createFileRoute("/create")({
+	head: () => ({
+		meta: [
+			{
+				name: "robots",
+				content: "noindex, nofollow",
+			},
+		],
+	}),
 	component: CreateRoom,
 });
 

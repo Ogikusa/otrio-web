@@ -2,7 +2,25 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { roomExists } from "../lib/room";
 
-export const Route = createFileRoute("/")({ component: Home });
+export const Route = createFileRoute("/")({
+	head: () => ({
+		meta: [
+			{
+				title: "Otrio Web",
+			},
+			{
+				name: "description",
+				content:
+					"Otrioをブラウザでオンライン対戦できるWebアプリ。ルームを作成するか、ルームIDを入力してゲームに参加できます。",
+			},
+			{
+				name: "robots",
+				content: "index, follow",
+			},
+		],
+	}),
+	component: Home,
+});
 
 function Home() {
 	const navigate = useNavigate({ from: "/" });
@@ -15,9 +33,10 @@ function Home() {
 			<main className="flex w-full min-h-screen flex-col justify-center items-center gap-4">
 				<h1 className="text-6xl mb-8">Otrio Web</h1>
 				<div className="flex flex-col gap-2 w-90 items-center border p-4">
-					<p>ルームIDを入力…</p>
+					<label htmlFor="roomIDInput">ルームIDを入力…</label>
 					<div className="flex gap-2 w-80">
 						<input
+							id="roomIDInput"
 							className="border h-16 min-w-0 flex-1 p-2 text-2xl font-bold text-center disabled:bg-gray-200"
 							disabled={isPending}
 							value={roomId}

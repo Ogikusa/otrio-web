@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+Disallow: /create
+Disallow: /rooms/
+Disallow: /api/
+
+Sitemap: https://otrio-web.ogikusa.com/sitemap.xml

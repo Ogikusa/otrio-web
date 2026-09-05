@@ -8,6 +8,14 @@ import { useGameRoom } from "../hooks/useGameRoom";
 import { joinRoom, roomExists } from "../lib/room";
 
 export const Route = createFileRoute("/rooms/$roomId")({
+	head: () => ({
+		meta: [
+			{
+				name: "robots",
+				content: "noindex, nofollow",
+			},
+		],
+	}),
 	component: RouteComponent,
 });
 
